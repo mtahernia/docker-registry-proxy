@@ -1,5 +1,5 @@
 branches:
-  - master
+  - coreweave
 preset: "angular"
 tagFormat: v${version}
 plugins:
