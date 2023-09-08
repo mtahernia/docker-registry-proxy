@@ -13,7 +13,7 @@ LABEL org.opencontainers.image.source https://github.com/rpardini/docker-registr
 RUN apk add --no-cache --update bash ca-certificates-bundle coreutils openssl
 
 # If set to 1, enables building mitmproxy, which helps a lot in debugging, but is super heavy to build.
-ARG DEBUG_BUILD="1"
+ARG DEBUG_BUILD="0"
 ENV DO_DEBUG_BUILD="$DEBUG_BUILD"
 
 # Build mitmproxy via pip. This is heavy, takes minutes do build and creates a 90mb+ layer. Oh well.
