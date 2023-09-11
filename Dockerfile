@@ -3,7 +3,7 @@
 # This is already multi-arch!
 ARG BASE_IMAGE="docker.io/rpardini/nginx-proxy-connect-stable-alpine:nginx-1.20.1-alpine-3.12.7"
 # Could be "-debug"
-ARG BASE_IMAGE_SUFFIX=""
+ARG BASE_IMAGE_SUFFIX="${IMAGE_SUFFIX}"
 FROM ${BASE_IMAGE}${BASE_IMAGE_SUFFIX}
 
 # Link image to original repository on GitHub
@@ -13,13 +13,12 @@ LABEL org.opencontainers.image.source https://github.com/rpardini/docker-registr
 RUN apk add --no-cache --update bash ca-certificates-bundle coreutils openssl
 
 # If set to 1, enables building mitmproxy, which helps a lot in debugging, but is super heavy to build.
-ARG DEBUG_BUILD="1"
-ENV DO_DEBUG_BUILD="$DEBUG_BUILD"
+ARG DO_DEBUG_BUILD="${DEBUG_IMAGE:-"0"}"
 
 # Build mitmproxy via pip. This is heavy, takes minutes do build and creates a 90mb+ layer. Oh well.
 RUN [[ "a$DO_DEBUG_BUILD" == "a1" ]] && { echo "Debug build ENABLED." \
  && apk add --no-cache --update su-exec git g++ libffi libffi-dev libstdc++ openssl-dev python3 python3-dev py3-pip py3-wheel py3-six py3-idna py3-certifi py3-setuptools \
- && LDFLAGS=-L/lib pip install mitmproxy==5.2 \
+ && LDFLAGS=-L/lib pip install MarkupSafe==2.0.1 mitmproxy==5.2 \
  && apk del --purge git g++ libffi-dev openssl-dev python3-dev py3-pip py3-wheel \
  && rm -rf ~/.cache/pip \
  ; } || { echo "Debug build disabled." ; }

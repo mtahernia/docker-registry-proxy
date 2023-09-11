@@ -3,7 +3,14 @@ default:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [ "" ]
   tags:
-    - ord1-tenant-acc
+    - ord1-tenant
+
+workflow:
+  rules:
+    - if: $CI_SOURCE_BRANCH != "coreweave"
+      variables: &variables
+          DEBUG_IMAGE: "1"
+          IMAGE_SUFFIX: "-debug"
 
 stages:
   - build
@@ -12,18 +19,23 @@ stages:
 build:
   stage: build
   variables:
+    <<: *variables
     REF_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
     FIXED_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     DOCKERFILE: ${CI_PROJECT_DIR}/Dockerfile
+    REGPROXY_URI: ${REGPROXY_URI}
   before_script:
-    - export HTTP_PROXY=${CACHE_PROXY}
-    - export NO_PROXY=${CACHE_REGISTRY_HOST}
+    - export HTTP_PROXY=${REGPROXY_URI}
+    - export HTTPS_PROXY=${REGPROXY_URI}
+    - mkdir -p /etc/ssl/certs/ && cat /etc/gitlab-runner/certs/proxy-ca.crt >> /etc/ssl/certs/ca-certificates.crt
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
   script: |-
     /kaniko/executor \
       $KANIKO_ADDTL_ARGS \
-      --context . \
+      --context ${CI_PROJECT_DIR} \
+      --build-arg DEBUG_IMAGE=${DEBUG_IMAGE} \
+      --build-arg IMAGE_SUFFIX=${IMAGE_SUFFIX} \
       --dockerfile $DOCKERFILE \
       --destination $REF_IMAGE \
       --destination $FIXED_IMAGE
@@ -62,11 +74,14 @@ release:
   dependencies:
     - build:release
   variables:
+    <<: *variables
     DOCKERFILE: $CI_PROJECT_DIR/Dockerfile
     LATEST_IMAGE: $CI_REGISTRY_IMAGE:latest
+    REGPROXY_URI: ${REGPROXY_URI}
   before_script:
-    - export HTTP_PROXY=${CACHE_PROXY}
-    - export NO_PROXY=${CACHE_REGISTRY_HOST}
+    - export HTTP_PROXY=${REGPROXY_URI}
+    - export HTTPS_PROXY=${REGPROXY_URI}
+    - mkdir -p /etc/ssl/certs/ && cat /etc/gitlab-runner/certs/proxy-ca.crt >> /etc/ssl/certs/ca-certificates.crt
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
     - export $(cat artifacts.env | xargs)
