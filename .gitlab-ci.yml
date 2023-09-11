@@ -5,6 +5,13 @@ default:
   tags:
     - ord1-tenant
 
+workflow:
+  rules:
+    - if: $CI_SOURCE_BRANCH != "coreweave"
+      variables: &variables
+          DEBUG_IMAGE: "1"
+          IMAGE_SUFFIX: "-debug"
+
 stages:
   - build
   - release
@@ -12,6 +19,7 @@ stages:
 build:
   stage: build
   variables:
+    <<: *variables
     REF_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
     FIXED_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     DOCKERFILE: ${CI_PROJECT_DIR}/Dockerfile
@@ -25,7 +33,9 @@ build:
   script: |-
     /kaniko/executor \
       $KANIKO_ADDTL_ARGS \
-      --context . \
+      --context ${CI_PROJECT_DIR} \
+      --build-arg DEBUG_IMAGE=${DEBUG_IMAGE} \
+      --build-arg IMAGE_SUFFIX=${IMAGE_SUFFIX} \
       --dockerfile $DOCKERFILE \
       --destination $REF_IMAGE \
       --destination $FIXED_IMAGE
