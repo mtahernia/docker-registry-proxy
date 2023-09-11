@@ -15,9 +15,11 @@ build:
     REF_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
     FIXED_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     DOCKERFILE: ${CI_PROJECT_DIR}/Dockerfile
+    REGPROXY_URI: ${REGPROXY_URI}
   before_script:
-    - export HTTP_PROXY=${CACHE_PROXY}
-    - export NO_PROXY=${CACHE_REGISTRY_HOST}
+    - export HTTP_PROXY=${REGPROXY_URI}
+    - export HTTPS_PROXY=${REGPROXY_URI}
+    - mkdir -p /etc/ssl/certs/ && cat /etc/gitlab-runner/certs/proxy-ca.crt >> /etc/ssl/certs/ca-certificates.crt
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
   script: |-
@@ -62,11 +64,14 @@ release:
   dependencies:
     - build:release
   variables:
+    <<: *variables
     DOCKERFILE: $CI_PROJECT_DIR/Dockerfile
     LATEST_IMAGE: $CI_REGISTRY_IMAGE:latest
+    REGPROXY_URI: ${REGPROXY_URI}
   before_script:
-    - export HTTP_PROXY=${CACHE_PROXY}
-    - export NO_PROXY=${CACHE_REGISTRY_HOST}
+    - export HTTP_PROXY=${REGPROXY_URI}
+    - export HTTPS_PROXY=${REGPROXY_URI}
+    - mkdir -p /etc/ssl/certs/ && cat /etc/gitlab-runner/certs/proxy-ca.crt >> /etc/ssl/certs/ca-certificates.crt
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
     - export $(cat artifacts.env | xargs)
