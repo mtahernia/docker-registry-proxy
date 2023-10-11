@@ -25,12 +25,12 @@ echo "DEBUG, determined RESOLVERS from /etc/resolv.conf: '$RESOLVERS'"
 conf=""
 for ONE_RESOLVER in ${RESOLVERS}; do
 	echo "Possible resolver: $ONE_RESOLVER"
-	conf="resolver $ONE_RESOLVER; "
+	conf="resolver $ONE_RESOLVER ipv6=off; "
 done
 
 echo "Final chosen resolver: $conf"
 confpath=/etc/nginx/resolvers.conf
-if [ ! -e $confpath ]
+if [ ! -e $confpath ] || [ "$conf" != "$(cat $confpath)" ]
 then
     echo "Using auto-determined resolver '$conf' via '$confpath'"
     echo "$conf" > $confpath
@@ -47,7 +47,7 @@ echo -n "" > /etc/nginx/docker.intercept.map
 
 # Some hosts/registries are always needed, but others can be configured in env var REGISTRIES
 for ONEREGISTRYIN in docker.caching.proxy.internal registry-1.docker.io auth.docker.io ${REGISTRIES}; do
-    ONEREGISTRY=$(echo ${ONEREGISTRYIN} | xargs) # Remove whitespace
+    ONEREGISTRY=$(echo ${ONEREGISTRYIN} | cut -d':' -f1 | xargs) # Remove whitespace
     echo "Adding certificate for registry: $ONEREGISTRY"
     ALLDOMAINS="${ALLDOMAINS},DNS:${ONEREGISTRY}"
     echo "${ONEREGISTRY} 127.0.0.1:443;" >> /etc/nginx/docker.intercept.map
@@ -60,6 +60,16 @@ export ALLDOMAINS=${ALLDOMAINS:1} # remove the first comma and export
 # Target host interception. Empty by default. Used to intercept outgoing requests
 # from the proxy to the registries.
 echo -n "" > /etc/nginx/docker.targetHost.map
+
+# Private registers can be located behind a TCP port other than 443.
+# In the environment variable REGISTRIES_CUSTOM_PORT you can list such registers
+# and specify the number of the TCP port serving them.
+echo -n "" > /etc/nginx/docker.customPort.map
+if [ "$REGISTRIES_CUSTOM_PORT" ]; then
+  for string in $REGISTRIES_CUSTOM_PORT;do
+    echo "$(echo $string | cut -d':' -f1) $(echo $string | cut -d':' -f2);" >> /etc/nginx/docker.customPort.map
+  done
+fi
 
 # Now handle the auth part.
 echo -n "" > /etc/nginx/docker.auth.map
@@ -99,6 +109,10 @@ echo "error_log  /var/log/nginx/error.log warn;" > /etc/nginx/error.log.debug.wa
 
 # Set Docker Registry cache size, by default, 32 GB ('32g')
 CACHE_MAX_SIZE=${CACHE_MAX_SIZE:-32g}
+CACHE_DEFAULT_TIME=${CACHE_DEFAULT_TIME:-60d}
+
+# Set default cache valid time for 200 and 205 response.
+sed -i "/# Cache all 200, 206 for 60 days default./a\        proxy_cache_valid 200 206 ${CACHE_DEFAULT_TIME};" /etc/nginx/nginx.conf
 
 # The cache directory. This can get huge. Better to use a Docker volume pointing here!
 # Set to 32gb which should be enough
@@ -111,6 +125,8 @@ echo -n "" >/etc/nginx/nginx.manifest.caching.config.conf
     # First tier caching of manifests; configure via MANIFEST_CACHE_PRIMARY_REGEX and MANIFEST_CACHE_PRIMARY_TIME
     location ~ ^/v2/(.*)/manifests/${MANIFEST_CACHE_PRIMARY_REGEX} {
         set \$docker_proxy_request_type "manifest-primary";
+        proxy_no_cache \$manifestcacheExclude;
+        proxy_cache_bypass \$manifestcacheExclude;
         proxy_cache_valid ${MANIFEST_CACHE_PRIMARY_TIME};
         include "/etc/nginx/nginx.manifest.stale.conf";
     }
@@ -120,6 +136,8 @@ EOD
     # Secondary tier caching of manifests; configure via MANIFEST_CACHE_SECONDARY_REGEX and MANIFEST_CACHE_SECONDARY_TIME
     location ~ ^/v2/(.*)/manifests/${MANIFEST_CACHE_SECONDARY_REGEX} {
         set \$docker_proxy_request_type "manifest-secondary";
+        proxy_no_cache \$manifestcacheExclude;
+        proxy_cache_bypass \$manifestcacheExclude;
         proxy_cache_valid ${MANIFEST_CACHE_SECONDARY_TIME};
         include "/etc/nginx/nginx.manifest.stale.conf";
     }
@@ -129,6 +147,8 @@ EOD
     # Default tier caching for manifests. Caches for ${MANIFEST_CACHE_DEFAULT_TIME} (from MANIFEST_CACHE_DEFAULT_TIME)
     location ~ ^/v2/(.*)/manifests/ {
         set \$docker_proxy_request_type "manifest-default";
+        proxy_no_cache \$manifestcacheExclude;
+        proxy_cache_bypass \$manifestcacheExclude;
         proxy_cache_valid ${MANIFEST_CACHE_DEFAULT_TIME};
         include "/etc/nginx/nginx.manifest.stale.conf";
     }
@@ -147,8 +167,44 @@ echo -e "\nManifest caching config: ---\n"
 cat /etc/nginx/nginx.manifest.caching.config.conf
 echo "---"
 
+if [[ "a${ALLOW_OWN_AUTH}" == "atrue" ]]; then
+    cat << 'EOF' > /etc/nginx/conf.d/allowed_override_auth.conf
+    if ($http_authorization != "") {
+        # override with own authentication if provided
+        set $finalAuth $http_authorization;
+    }
+EOF
+else
+    echo '' > /etc/nginx/conf.d/allowed_override_auth.conf
+fi
+
 if [[ "a${ALLOW_PUSH}" == "atrue" ]]; then
     cat <<EOF > /etc/nginx/conf.d/allowed.methods.conf
+    # allow to upload big layers
+    client_max_body_size 0;
+
+    # only cache GET requests
+    proxy_cache_methods GET;
+EOF
+elif [[ "a${ALLOW_PUSH_WITH_OWN_AUTH}" == "atrue" ]]; then
+    cat << 'EOF' > /etc/nginx/conf.d/allowed.methods.conf
+    # Block POST/PUT/DELETE if own authentication is not provided.
+    set $combined_ha_rm "$http_authorization$request_method";
+    if ($combined_ha_rm = POST) {
+        return 405 "POST method is not allowed";
+    }
+    if ($combined_ha_rm = PUT) {
+        return 405 "PUT method is not allowed";
+    }
+    if ($combined_ha_rm = DELETE) {
+        return 405  "DELETE method is not allowed";
+    }
+
+    if ($http_authorization != "") {
+        # override with own authentication if provided
+        set $finalAuth $http_authorization;
+    }
+
     # allow to upload big layers
     client_max_body_size 0;
 
@@ -168,6 +224,16 @@ else
         return 405  "DELETE method is not allowed";
     }
 EOF
+fi
+
+# Manifest cache exclude per host basis:
+## default 0 should always be here:
+echo "default 0;" > /etc/nginx/nginx.manifest.cache.exclude.map;
+if [[ "x$MANIFEST_CACHE_EXCLUDE_HOSTS" != "x" ]]; then
+    MANIFEST_CACHE_EXCLUDE_LIST=( $MANIFEST_CACHE_EXCLUDE_HOSTS )
+    for index in "${!MANIFEST_CACHE_EXCLUDE_LIST[@]}"; do
+        echo "\"${MANIFEST_CACHE_EXCLUDE_LIST[$index]}\" 1;";
+    done >> /etc/nginx/nginx.manifest.cache.exclude.map;
 fi
 
 # normally use non-debug version of nginx
@@ -252,6 +318,18 @@ EOD
 
 echo -e "\nTimeout configs: ---"
 cat /etc/nginx/nginx.timeouts.config.conf
+echo -e "---\n"
+
+# Request buffering
+echo "" > /etc/nginx/proxy.buffering.conf
+if [[ "a${PROXY_BUFFERING}" == "afalse" ]]; then
+  cat << EOD > /etc/nginx/proxy.buffering.conf
+  proxy_buffering off;
+EOD
+fi
+
+echo -e "\nBuffering: ---"
+cat /etc/nginx/proxy.buffering.conf
 echo -e "---\n"
 
 # Request buffering
