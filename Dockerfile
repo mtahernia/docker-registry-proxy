@@ -169,6 +169,8 @@ EXPOSE 8082
 ## Default envs.
 # A space delimited list of registries we should proxy and cache; this is in addition to the central DockerHub.
 ENV REGISTRIES="k8s.gcr.io gcr.io quay.io"
+# List of registries requiring a special TCP port
+ENV REGISTRIES_CUSTOM_PORT="registry-1.docker.io:443"
 # A space delimited list of registry:user:password to inject authentication for
 ENV AUTH_REGISTRIES="some.authenticated.registry:oneuser:onepassword another.registry:user:password"
 # Should we verify upstream's certificates? Default to true.
@@ -205,6 +207,9 @@ ENV MANIFEST_CACHE_SECONDARY_TIME="60d"
 # The default cache duration for manifests that don't match either the primary or secondary tiers above.
 # In the default config, :latest and other frequently-used tags will get this value.
 ENV MANIFEST_CACHE_DEFAULT_TIME="1h"
+
+# This lists the registries hosts for which manifests caching is disabled
+ENV MANIFEST_CACHE_EXCLUDE_HOSTS="privat.registry.io"
 
 # Should we allow actions different than pull, default to false.
 ENV ALLOW_PUSH="false"
